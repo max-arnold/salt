@@ -1,0 +1,6 @@
+classes:
+  - L1.A
+  - L1.B
+
+# watch L0.B pillars - it was included in the tree twice,
+# but it's pillars must not be doubled!
