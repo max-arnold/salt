@@ -43,12 +43,6 @@ class SaltclassPillarNewTestCase(TestCase, LoaderModuleMockMixin):
             self.rets[minion_id] = saltclass.ext_pillar(minion_id, fake_pillar, fake_args)
         return self.rets[minion_id]
 
-    def test_000_pprint(self):
-        from pprint import pprint
-        for m in (fake_minion_id1, fake_minion_id2):
-            print(m + ":")
-            pprint(self._get_ret(m))
-
     def test_simple_case_pillars(self):
         expected_result = {
             'L0A':
