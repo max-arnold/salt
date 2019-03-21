@@ -9,6 +9,15 @@ pillars:
     - ^
     - L0C-1
     - L0C-2
+  L0C:
+    plaintext: plaintext_from_L0C
+    list: 
+      - L0C-1
+      - L0C-2
+    dict: 
+      k1: L0C-1
+      k2: L0C-2
   expansion:
-    plaintext: ${same_plaintext_pillar}
-    list: ${same_list_pillar}
+    plaintext: ${L0C:plaintext}
+    list: ${L0C:list}
+    dict: ${L0C:dict}

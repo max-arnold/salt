@@ -1,3 +1,5 @@
+environment: base
+
 classes:
   - L1.A
   - L1.B
