@@ -32,16 +32,24 @@ class SaltclassPillarNewTestCase(TestCase, LoaderModuleMockMixin):
     New tests for salt.pillar.saltclass
     '''
     rets = {}
-
     def setup_loader_modules(self):
         return {saltclass: {'__opts__': fake_opts,
                             '__salt__': fake_salt,
                             '__grains__': fake_grains}}
 
-    def _get_ret(self, minion_id):
+    def _get_ret2(self, minion_id):
         if minion_id not in self.rets:
             self.rets[minion_id] = saltclass.ext_pillar(minion_id, fake_pillar, fake_args)
         return self.rets[minion_id]
+
+    def _get_ret(self, minion_id):
+        return saltclass.ext_pillar(minion_id, fake_pillar, fake_args)
+
+    def test_000_pprint(self):
+        from pprint import pprint
+        for m in (fake_minion_id1, fake_minion_id2):
+            print(m + ":")
+            pprint(self._get_ret2(m), width=1)
 
     def test_simple_case_pillars(self):
         expected_result = {
@@ -132,3 +140,4 @@ class SaltclassPillarNewTestCase(TestCase, LoaderModuleMockMixin):
         filtered_result = result['__saltclass__']['states']
         for v in expected_states:
             self.assertIn(v, filtered_result)
+

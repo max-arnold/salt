@@ -13,6 +13,9 @@ import salt.utils.yaml
 # Import 3rd-party libs
 from salt.ext import six
 
+# No need to invent bicycle
+from collections import deque, OrderedDict
+
 log = logging.getLogger(__name__)
 
 
@@ -78,24 +81,40 @@ def get_env_from_dict(exp_dict_list):
 
 
 # Merge dict b into a
-def dict_merge(a, b, path=None):
+def dict_merge(a, b, path=None, reverse=False):
     if path is None:
         path = []
 
     for key in b:
         if key in a:
             if isinstance(a[key], list) and isinstance(b[key], list):
-                if b[key][0] == '^':
-                    b[key].pop(0)
-                    a[key] = b[key]
+                if not reverse:
+                    if b[key][0] == '^':
+                        b[key].pop(0)
+                        a[key] = b[key]
+                    else:
+                        a[key].extend(b[key])
                 else:
-                    a[key].extend(b[key])
+                    # если в листе, куда мержим, уже есть ^
+                    # то не делаем ничего
+                    if a[key][0] == '^':
+                        pass
+                    # если нет, то мержим в начало
+                    else:
+                        a[key][0:0] = b[key]
             elif isinstance(a[key], dict) and isinstance(b[key], dict):
-                dict_merge(a[key], b[key], path + [six.text_type(key)])
+                dict_merge(a[key], b[key], path + [six.text_type(key)], reverse=reverse)
             elif a[key] == b[key]:
                 pass
             else:
-                a[key] = b[key]
+                # если мы здесь, то у ключей в a и b разные типы
+                # в случае reverse обновляем, тк проход происходит в направлении generic -> specific
+                if not reverse:
+                    a[key] = b[key]
+                # в случае не reverse не трогаем, тк проход происходит в направлении specific -> generic
+                # и в a[key] уже более правильные данные
+                else:
+                    pass
         else:
             a[key] = b[key]
     return a
@@ -191,6 +210,75 @@ def expand_variables(a, b, expanded, path=None):
     return b
 
 
+def new_expand_classes_in_order(minion_classes, minion_states, minion_pillars, salt_data):
+    # tmp
+    import copy
+    salt_data = copy.deepcopy(salt_data)
+
+    # Merge minion_pillars into salt_data
+    #dict_merge(salt_data['__pillar__'], minion_pillars)
+
+    # Init classes list with data from minion
+    classes = deque(reversed(minion_classes))
+
+    # Init states list with data from minion
+    states = minion_states[:]
+
+    seen_classes = set()
+    expanded_classes = OrderedDict()
+
+    #
+    # Build expanded_classes OrderedDict (we'll need it later)
+    # and pillars dict for a minion
+    #
+    while classes:
+        cls = classes.pop()
+        seen_classes.add(cls)
+        expanded_class = get_class(cls, salt_data)
+        expanded_classes[cls] = expanded_class
+        if 'pillars' in expanded_class:
+            dict_merge(salt_data['__pillar__'], expanded_class['pillars'], reverse=True)
+        if 'classes' in expanded_class:
+            for c in reversed(expanded_class['classes']):
+                if c not in seen_classes and c not in classes:
+                    classes.appendleft(c)
+
+    # Get ordered class and state lists from expanded_classes and minion_classes (traverse expanded_classes tree)
+    def traverse(this_class, result_list):
+        result_list.append(this_class)
+        leafs = expanded_classes.get(this_class, {}).get('classes', [])
+        for leaf in leafs:
+            traverse(leaf, result_list)
+
+    ordered_class_list = []
+    for cls in minion_classes:
+        traverse(cls, ordered_class_list)
+
+    # Remove duplicates
+    tmp = []
+    for cls in reversed(ordered_class_list):
+        if cls not in tmp:
+            tmp.append(cls)
+    ordered_class_list = tmp[::-1]
+
+    # Get states from classes
+    ordered_state_list = []
+    for cls in ordered_class_list:
+        class_states = expanded_classes.get(cls, {}).get('states', [])
+        for state in class_states:
+            # Ignore states with override (^) markers in it's names
+            # Do it here because it's cheaper
+            if state not in ordered_state_list and state.find('^') == -1:
+                ordered_state_list.append(state)
+
+    # Expand ${xx:yy:zz} here and pop override (^) markers
+    salt_data['__pillar__'] = expand_variables(pop_override_markers(salt_data['__pillar__']), {}, [])
+    salt_data['__classes__'] = ordered_class_list
+    salt_data['__states__'] = ordered_class_list
+
+    return
+
+
 def expand_classes_in_order(minion_dict,
                             salt_data,
                             seen_classes,
@@ -258,6 +346,27 @@ def expand_classes_in_order(minion_dict,
 
     return ord_expanded_classes, classes_to_expand, ord_expanded_states
 
+def new_expanded_dict_from_minion(minion_id, salt_data):
+    _file = ''
+    saltclass_path = salt_data['path']
+    # Start
+    for root, dirs, files in salt.utils.path.os_walk(os.path.join(saltclass_path, 'nodes'), followlinks=True):
+        for minion_file in files:
+            if minion_file == '{0}.yml'.format(minion_id):
+                _file = os.path.join(root, minion_file)
+
+    # Load the minion_id definition if existing, else an empty dict
+    node_dict = {}
+    if _file:
+        node_dict[minion_id] = render_yaml(_file, salt_data)
+    else:
+        log.info('%s: Node definition not found in saltclass', minion_id)
+        node_dict[minion_id] = {}
+
+
+
+
+
 
 def expanded_dict_from_minion(minion_id, salt_data):
     _file = ''
@@ -273,11 +382,21 @@ def expanded_dict_from_minion(minion_id, salt_data):
     if _file:
         node_dict[minion_id] = render_yaml(_file, salt_data)
     else:
-        log.warning('%s: Node definition not found', minion_id)
+        log.info('%s: Node definition not found in saltclass', minion_id)
         node_dict[minion_id] = {}
+        
+    new_expand_classes_in_order(
+        node_dict[minion_id]['classes'] if 'classes' in node_dict[minion_id] else [],
+        node_dict[minion_id]['states'] if 'states' in node_dict[minion_id] else [],
+        node_dict[minion_id]['pillars'] if 'pillars' in node_dict[minion_id] else {},
+        salt_data
+    )
 
     # Merge newly found pillars into existing ones
     dict_merge(salt_data['__pillar__'], node_dict[minion_id].get('pillars', {}))
+
+
+
 
     # Get 2 ordered lists:
     # expanded_classes: A list of all the dicts
@@ -285,6 +404,7 @@ def expanded_dict_from_minion(minion_id, salt_data):
     expanded_classes, classes_list, states_list = expand_classes_in_order(
                                                     node_dict[minion_id],
                                                     salt_data, [], {}, [])
+
 
     # Here merge the pillars together
     pillars_dict = {}
@@ -307,6 +427,9 @@ def pop_override_markers(b):
         for sub in b.values():
             pop_override_markers(sub)
     return b
+
+def new_get_pillars(minion_id, salt_data):
+    new_expanded_dict_from_minion(minion_id, salt_data)
 
 
 def get_pillars(minion_id, salt_data):
