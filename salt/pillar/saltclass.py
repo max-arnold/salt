@@ -62,4 +62,4 @@ def ext_pillar(minion_id, pillar, *args, **kwargs):
         'path': path
     }
 
-    return sc.get_pillars(minion_id, salt_data)
+    return sc.new_get_pillars(minion_id, salt_data)

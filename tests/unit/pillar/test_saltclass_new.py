@@ -16,6 +16,8 @@ import salt.pillar.saltclass as saltclass
 base_path = os.path.dirname(os.path.realpath(__file__))
 fake_minion_id1 = 'fake_id1'
 fake_minion_id2 = 'fake_id2'
+fake_minion_id3 = 'fake_id3'
+fake_minion_id4 = 'fake_id4'
 
 fake_pillar = {}
 fake_args = ({'path': os.path.abspath(
@@ -27,31 +29,17 @@ fake_grains = {}
 
 
 @skipIf(NO_MOCK, NO_MOCK_REASON)
-class SaltclassPillarNewTestCase(TestCase, LoaderModuleMockMixin):
+class SaltclassTestCase1(TestCase, LoaderModuleMockMixin):
     '''
     New tests for salt.pillar.saltclass
     '''
-    rets = {}
+
     def setup_loader_modules(self):
         return {saltclass: {'__opts__': fake_opts,
                             '__salt__': fake_salt,
                             '__grains__': fake_grains}}
 
-    def _get_ret2(self, minion_id):
-        if minion_id not in self.rets:
-            self.rets[minion_id] = saltclass.ext_pillar(minion_id, fake_pillar, fake_args)
-        return self.rets[minion_id]
-
-    def _get_ret(self, minion_id):
-        return saltclass.ext_pillar(minion_id, fake_pillar, fake_args)
-
-    def test_000_pprint(self):
-        from pprint import pprint
-        for m in (fake_minion_id1, fake_minion_id2):
-            print(m + ":")
-            pprint(self._get_ret2(m), width=1)
-
-    def test_simple_case_pillars(self):
+    def test_simple_case(self):
         expected_result = {
             'L0A':
                 {
@@ -66,26 +54,23 @@ class SaltclassPillarNewTestCase(TestCase, LoaderModuleMockMixin):
                     'plaintext': 'plaintext_from_L0B'
                 }
         }
-        result = self._get_ret(fake_minion_id1)
+        result = saltclass.ext_pillar(fake_minion_id1, {}, fake_args)
         filtered_result = {k: result[k] for k in ('L0A', 'L0B') if k in result}
         self.assertDictEqual(filtered_result, expected_result)
 
-    def test_simple_case_saltclass(self):
+    def test_metainformation(self):
         expected_result = {
-            '__saltclass__':
-                {
-                    'classes': ['L0.A',
-                                'L0.B.otherclass',
-                                'L0.B',
-                                'L1.A',
-                                'L1.B',
-                                'L2.A'],
-                    'environment': 'base',
-                    'nodename': 'fake_id1',
-                    'states': ['state_A', 'state_B']
-                }
+            '__saltclass__': {'classes': ['L2.A',
+                                          'L1.A',
+                                          'L0.A',
+                                          'L1.B',
+                                          'L0.B',
+                                          'L0.B.otherclass'],
+                              'environment': 'customenv',
+                              'nodename': 'fake_id1',
+                              'states': ['state_A', 'state_B']}
         }
-        result = self._get_ret(fake_minion_id1)
+        result = saltclass.ext_pillar(fake_minion_id1, {}, fake_args)
         filtered_result = {'__saltclass__': result.get('__saltclass__')}
         self.assertDictEqual(filtered_result, expected_result)
 
@@ -93,7 +78,7 @@ class SaltclassPillarNewTestCase(TestCase, LoaderModuleMockMixin):
         expected_result = {
             'same_plaintext_pillar': 'from_L0B'
         }
-        result = self._get_ret(fake_minion_id1)
+        result = saltclass.ext_pillar(fake_minion_id1, {}, fake_args)
         filtered_result = {'same_plaintext_pillar': result.get('same_plaintext_pillar')}
         self.assertDictEqual(filtered_result, expected_result)
 
@@ -101,15 +86,7 @@ class SaltclassPillarNewTestCase(TestCase, LoaderModuleMockMixin):
         expected_result = {
             'same_list_pillar': ['L0A-1', 'L0A-2', 'L0B-1', 'L0B-2']
         }
-        result = self._get_ret(fake_minion_id1)
-        filtered_result = {'same_list_pillar': result.get('same_list_pillar')}
-        self.assertDictEqual(filtered_result, expected_result)
-
-    def test_list_override(self):
-        expected_result = {
-            'same_list_pillar': ['L0C-1', 'L0C-2']
-        }
-        result = self._get_ret(fake_minion_id2)
+        result = saltclass.ext_pillar(fake_minion_id1, {}, fake_args)
         filtered_result = {'same_list_pillar': result.get('same_list_pillar')}
         self.assertDictEqual(filtered_result, expected_result)
 
@@ -117,8 +94,16 @@ class SaltclassPillarNewTestCase(TestCase, LoaderModuleMockMixin):
         expected_result = {
             'single-list-override': [1, 2]
         }
-        result = self._get_ret(fake_minion_id1)
+        result = saltclass.ext_pillar(fake_minion_id1, {}, fake_args)
         filtered_result = {'single-list-override': result.get('single-list-override')}
+        self.assertDictEqual(filtered_result, expected_result)
+
+    def test_list_override(self):
+        expected_result = {
+            'same_list_pillar': ['L0C-1', 'L0C-2']
+        }
+        result = saltclass.ext_pillar(fake_minion_id2, {}, fake_args)
+        filtered_result = {'same_list_pillar': result.get('same_list_pillar')}
         self.assertDictEqual(filtered_result, expected_result)
 
     def test_pillar_expansion(self):
@@ -130,14 +115,45 @@ class SaltclassPillarNewTestCase(TestCase, LoaderModuleMockMixin):
                     'plaintext': 'plaintext_from_L0C'
                 }
         }
-        result = self._get_ret(fake_minion_id2)
+        result = saltclass.ext_pillar(fake_minion_id2, {}, fake_args)
         filtered_result = {'expansion': result.get('expansion')}
         self.assertDictEqual(filtered_result, expected_result)
 
     def test_pillars_in_jinja(self):
         expected_states = ['state_B', 'state_C.1', 'state_C.9999']
-        result = self._get_ret(fake_minion_id2)
+        result = saltclass.ext_pillar(fake_minion_id2, {}, fake_args)
         filtered_result = result['__saltclass__']['states']
         for v in expected_states:
             self.assertIn(v, filtered_result)
 
+    def test_cornercases(self):
+        expected_result = {'nonsaltclass_pillar': 'value'}
+        result = saltclass.ext_pillar(fake_minion_id3, {'nonsaltclass_pillar': 'value'}, fake_args)
+        filtered_result = {'nonsaltclass_pillar': result.get('nonsaltclass_pillar')}
+        self.assertDictEqual(filtered_result, expected_result)
+
+    def test_nonsaltclass_pillars(self):
+        nonsaltclass_pillars = {
+            'plaintext_no_override': 'not_from_saltclass',
+            'plaintext_with_override': 'not_from_saltclass',
+            'list': [1, 2],
+            'dict': {
+                'a': 1,
+                'b': 1
+            }
+        }
+        expected_result = {
+            'plaintext_no_override': 'not_from_saltclass',
+            'plaintext_with_override': 'saltclass',
+            'list': [1, 2, 3],
+            'dict': {
+                'a': 1,
+                'b': 2,
+                'c': 1
+            }
+        }
+        result = saltclass.ext_pillar(fake_minion_id4, nonsaltclass_pillars, fake_args)
+        filtered_result = {}
+        for key in expected_result.keys():
+            filtered_result[key] = result.get(key)
+        self.assertDictEqual(filtered_result, expected_result)

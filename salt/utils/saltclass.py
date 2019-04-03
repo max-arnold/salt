@@ -9,6 +9,7 @@ from jinja2 import FileSystemLoader, Environment
 # Import Salt libs
 import salt.utils.path
 import salt.utils.yaml
+from salt.exceptions import SaltException
 
 # Import 3rd-party libs
 from salt.ext import six
@@ -210,19 +211,32 @@ def expand_variables(a, b, expanded, path=None):
     return b
 
 
-def new_expand_classes_in_order(minion_classes, minion_states, minion_pillars, salt_data):
-    # tmp
-    import copy
-    salt_data = copy.deepcopy(salt_data)
+def validate(name, data):
+    if 'classes' in data:
+        data['classes'] = [] if data['classes'] is None else data['classes']  # None -> []
+        if not isinstance(data['classes'], list):
+            raise SaltException('Classes in {} is not a valid list'.format(name))
+    if 'pillars' in data:
+        data['pillars'] = {} if data['pillars'] is None else data['pillars']  # None -> {}
+        if not isinstance(data['pillars'], dict):
+            raise SaltException('Pillars in {} is not a valid dict'.format(name))
+    if 'states' in data:
+        data['states'] = [] if data['states'] is None else data['states']  # None -> []
+        if not isinstance(data['states'], list):
+            raise SaltException('States in {} is not a valid list'.format(name))
+    if 'environment' in data:
+        data['environment'] = '' if data['environment'] is None else data['environment']  # None -> ''
+        if not isinstance(data['environment'], six.string_types):
+            raise SaltException('Environment in {} is not a valid string'.format(name))
+    return
 
+
+def get_saltclass_data(node_data, salt_data):
     # Merge minion_pillars into salt_data
-    #dict_merge(salt_data['__pillar__'], minion_pillars)
+    dict_merge(salt_data['__pillar__'], node_data.get('pillars', {}))
 
     # Init classes list with data from minion
-    classes = deque(reversed(minion_classes))
-
-    # Init states list with data from minion
-    states = minion_states[:]
+    classes = deque(reversed(node_data.get('classes', [])))
 
     seen_classes = set()
     expanded_classes = OrderedDict()
@@ -235,8 +249,9 @@ def new_expand_classes_in_order(minion_classes, minion_states, minion_pillars, s
         cls = classes.pop()
         seen_classes.add(cls)
         expanded_class = get_class(cls, salt_data)
+        validate(cls, expanded_class)
         expanded_classes[cls] = expanded_class
-        if 'pillars' in expanded_class:
+        if 'pillars' in expanded_class and expanded_class['pillars'] is not None:
             dict_merge(salt_data['__pillar__'], expanded_class['pillars'], reverse=True)
         if 'classes' in expanded_class:
             for c in reversed(expanded_class['classes']):
@@ -250,8 +265,9 @@ def new_expand_classes_in_order(minion_classes, minion_states, minion_pillars, s
         for leaf in leafs:
             traverse(leaf, result_list)
 
+    # Start with node_data classes again, since we need to retain order
     ordered_class_list = []
-    for cls in minion_classes:
+    for cls in node_data.get('classes', []):
         traverse(cls, ordered_class_list)
 
     # Remove duplicates
@@ -261,10 +277,13 @@ def new_expand_classes_in_order(minion_classes, minion_states, minion_pillars, s
             tmp.append(cls)
     ordered_class_list = tmp[::-1]
 
-    # Get states from classes
-    ordered_state_list = []
+    # Build state list and get 'environment' variable
+    ordered_state_list = node_data.get('states', [])
+    environment = ''
     for cls in ordered_class_list:
         class_states = expanded_classes.get(cls, {}).get('states', [])
+        if not environment:
+            environment = expanded_classes.get(cls, {}).get('environment', '')
         for state in class_states:
             # Ignore states with override (^) markers in it's names
             # Do it here because it's cheaper
@@ -274,9 +293,8 @@ def new_expand_classes_in_order(minion_classes, minion_states, minion_pillars, s
     # Expand ${xx:yy:zz} here and pop override (^) markers
     salt_data['__pillar__'] = expand_variables(pop_override_markers(salt_data['__pillar__']), {}, [])
     salt_data['__classes__'] = ordered_class_list
-    salt_data['__states__'] = ordered_class_list
-
-    return
+    salt_data['__states__'] = ordered_state_list
+    return salt_data['__pillar__'], salt_data['__classes__'], salt_data['__states__'], environment
 
 
 def expand_classes_in_order(minion_dict,
@@ -346,7 +364,8 @@ def expand_classes_in_order(minion_dict,
 
     return ord_expanded_classes, classes_to_expand, ord_expanded_states
 
-def new_expanded_dict_from_minion(minion_id, salt_data):
+
+def get_node_data(minion_id, salt_data):
     _file = ''
     saltclass_path = salt_data['path']
     # Start
@@ -356,16 +375,14 @@ def new_expanded_dict_from_minion(minion_id, salt_data):
                 _file = os.path.join(root, minion_file)
 
     # Load the minion_id definition if existing, else an empty dict
-    node_dict = {}
+
     if _file:
-        node_dict[minion_id] = render_yaml(_file, salt_data)
+        result = render_yaml(_file, salt_data)
+        validate(minion_id, result)
+        return result
     else:
         log.info('%s: Node definition not found in saltclass', minion_id)
-        node_dict[minion_id] = {}
-
-
-
-
+        return {}
 
 
 def expanded_dict_from_minion(minion_id, salt_data):
@@ -384,13 +401,8 @@ def expanded_dict_from_minion(minion_id, salt_data):
     else:
         log.info('%s: Node definition not found in saltclass', minion_id)
         node_dict[minion_id] = {}
-        
-    new_expand_classes_in_order(
-        node_dict[minion_id]['classes'] if 'classes' in node_dict[minion_id] else [],
-        node_dict[minion_id]['states'] if 'states' in node_dict[minion_id] else [],
-        node_dict[minion_id]['pillars'] if 'pillars' in node_dict[minion_id] else {},
-        salt_data
-    )
+
+
 
     # Merge newly found pillars into existing ones
     dict_merge(salt_data['__pillar__'], node_dict[minion_id].get('pillars', {}))
@@ -428,8 +440,21 @@ def pop_override_markers(b):
             pop_override_markers(sub)
     return b
 
+
 def new_get_pillars(minion_id, salt_data):
-    new_expanded_dict_from_minion(minion_id, salt_data)
+    node_data = get_node_data(minion_id, salt_data)
+    pillars, classes, states, environment = get_saltclass_data(node_data, salt_data)
+
+    # Build the final pillars dict
+    pillars_dict = {}
+    pillars_dict['__saltclass__'] = {}
+    pillars_dict['__saltclass__']['states'] = states
+    pillars_dict['__saltclass__']['classes'] = classes
+    pillars_dict['__saltclass__']['environment'] = environment
+    pillars_dict['__saltclass__']['nodename'] = minion_id
+    pillars_dict.update(pillars)
+
+    return pillars_dict
 
 
 def get_pillars(minion_id, salt_data):
