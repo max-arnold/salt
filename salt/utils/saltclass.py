@@ -96,11 +96,11 @@ def dict_merge(a, b, path=None, reverse=False):
                     else:
                         a[key].extend(b[key])
                 else:
-                    # если в листе, куда мержим, уже есть ^
-                    # то не делаем ничего
+                    # In reverse=True mode if target list (from higher level class)
+                    # already has ^ , then we do nothing
                     if a[key][0] == '^':
                         pass
-                    # если нет, то мержим в начало
+                    # if it doesn't - merge to the beginning
                     else:
                         a[key][0:0] = b[key]
             elif isinstance(a[key], dict) and isinstance(b[key], dict):
@@ -108,12 +108,11 @@ def dict_merge(a, b, path=None, reverse=False):
             elif a[key] == b[key]:
                 pass
             else:
-                # если мы здесь, то у ключей в a и b разные типы
-                # в случае reverse обновляем, тк проход происходит в направлении generic -> specific
+                # If we're here a and b has different types.
+                # Update in case reverse=True
                 if not reverse:
                     a[key] = b[key]
-                # в случае не reverse не трогаем, тк проход происходит в направлении specific -> generic
-                # и в a[key] уже более правильные данные
+                # And just pass in case reverse=False since key a already has data from higher levels
                 else:
                     pass
         else:
@@ -156,6 +155,7 @@ def find_value_to_expand(x, v):
     return a
 
 
+# TODO: refactor this please!
 # Look for regexes and expand them
 def find_and_process_re(_str, v, k, b, expanded):
     vre = re.finditer(r'(^|.)\$\{.*?\}', _str)
@@ -175,7 +175,7 @@ def find_and_process_re(_str, v, k, b, expanded):
             else:
                 v_expanded = find_value_to_expand(b, re_str)
                 # TODO: refactor is badly needed here!
-                if isinstance(v_expanded, list) or isinstance(v_expanded, dict):
+                if isinstance(v_expanded, (list, dict)):
                     v_new = v_expanded
                 # Have no idea why do we need two variables of the same - _str and v
                 elif isinstance(v, six.string_types):
@@ -209,26 +209,6 @@ def expand_variables(a, b, expanded, path=None):
             if isinstance(v, six.string_types):
                 b = find_and_process_re(v, v, k, b, expanded)
     return b
-
-
-def validate(name, data):
-    if 'classes' in data:
-        data['classes'] = [] if data['classes'] is None else data['classes']  # None -> []
-        if not isinstance(data['classes'], list):
-            raise SaltException('Classes in {} is not a valid list'.format(name))
-    if 'pillars' in data:
-        data['pillars'] = {} if data['pillars'] is None else data['pillars']  # None -> {}
-        if not isinstance(data['pillars'], dict):
-            raise SaltException('Pillars in {} is not a valid dict'.format(name))
-    if 'states' in data:
-        data['states'] = [] if data['states'] is None else data['states']  # None -> []
-        if not isinstance(data['states'], list):
-            raise SaltException('States in {} is not a valid list'.format(name))
-    if 'environment' in data:
-        data['environment'] = '' if data['environment'] is None else data['environment']  # None -> ''
-        if not isinstance(data['environment'], six.string_types):
-            raise SaltException('Environment in {} is not a valid string'.format(name))
-    return
 
 
 def get_saltclass_data(node_data, salt_data):
@@ -297,74 +277,6 @@ def get_saltclass_data(node_data, salt_data):
     return salt_data['__pillar__'], salt_data['__classes__'], salt_data['__states__'], environment
 
 
-def expand_classes_in_order(minion_dict,
-                            salt_data,
-                            seen_classes,
-                            expanded_classes,
-                            classes_to_expand):
-    # Get classes to expand from minion dictionary
-    if not classes_to_expand and 'classes' in minion_dict:
-        classes_to_expand = minion_dict['classes']
-
-    # Now loop on list to recursively expand them
-    for klass in classes_to_expand:
-        if klass not in seen_classes:
-            seen_classes.append(klass)
-            expanded_classes[klass] = get_class(klass, salt_data)
-            # Fix corner case where class is loaded but doesn't contain anything
-            if expanded_classes[klass] is None:
-                expanded_classes[klass] = {}
-
-            # Now replace class element in classes_to_expand by expansion
-            if expanded_classes[klass].get('classes'):
-                l_id = classes_to_expand.index(klass)
-                classes_to_expand[l_id:l_id] = expanded_classes[klass]['classes']
-                expand_classes_in_order(minion_dict,
-                                        salt_data,
-                                        seen_classes,
-                                        expanded_classes,
-                                        classes_to_expand)
-            else:
-                expand_classes_in_order(minion_dict,
-                                        salt_data,
-                                        seen_classes,
-                                        expanded_classes,
-                                        classes_to_expand)
-
-    # We may have duplicates here and we want to remove them
-    tmp = []
-    for t_element in classes_to_expand:
-        if t_element not in tmp:
-            tmp.append(t_element)
-
-    classes_to_expand = tmp
-
-    # Now that we've retrieved every class in order,
-    # let's return an ordered list of dicts
-    ord_expanded_classes = []
-    ord_expanded_states = []
-    for ord_klass in classes_to_expand:
-        ord_expanded_classes.append(expanded_classes[ord_klass])
-        # And be smart and sort out states list
-        # Address the corner case where states is empty in a class definition
-        if 'states' in expanded_classes[ord_klass] and expanded_classes[ord_klass]['states'] is None:
-            expanded_classes[ord_klass]['states'] = {}
-
-        if 'states' in expanded_classes[ord_klass]:
-            ord_expanded_states.extend(expanded_classes[ord_klass]['states'])
-
-    # Add our minion dict as final element but check if we have states to process
-    if 'states' in minion_dict and minion_dict['states'] is None:
-        minion_dict['states'] = []
-
-    if 'states' in minion_dict:
-        ord_expanded_states.extend(minion_dict['states'])
-
-    ord_expanded_classes.append(minion_dict)
-
-    return ord_expanded_classes, classes_to_expand, ord_expanded_states
-
-
 def get_node_data(minion_id, salt_data):
     _file = ''
     saltclass_path = salt_data['path']
@@ -385,48 +297,6 @@ def get_node_data(minion_id, salt_data):
         return {}
 
 
-def expanded_dict_from_minion(minion_id, salt_data):
-    _file = ''
-    saltclass_path = salt_data['path']
-    # Start
-    for root, dirs, files in salt.utils.path.os_walk(os.path.join(saltclass_path, 'nodes'), followlinks=True):
-        for minion_file in files:
-            if minion_file == '{0}.yml'.format(minion_id):
-                _file = os.path.join(root, minion_file)
-
-    # Load the minion_id definition if existing, else an empty dict
-    node_dict = {}
-    if _file:
-        node_dict[minion_id] = render_yaml(_file, salt_data)
-    else:
-        log.info('%s: Node definition not found in saltclass', minion_id)
-        node_dict[minion_id] = {}
-
-
-
-    # Merge newly found pillars into existing ones
-    dict_merge(salt_data['__pillar__'], node_dict[minion_id].get('pillars', {}))
-
-
-
-
-    # Get 2 ordered lists:
-    # expanded_classes: A list of all the dicts
-    # classes_list: List of all the classes
-    expanded_classes, classes_list, states_list = expand_classes_in_order(
-                                                    node_dict[minion_id],
-                                                    salt_data, [], {}, [])
-
-
-    # Here merge the pillars together
-    pillars_dict = {}
-    for exp_dict in expanded_classes:
-        if 'pillars' in exp_dict:
-            dict_merge(pillars_dict, exp_dict)
-
-    return expanded_classes, pillars_dict, classes_list, states_list
-
-
 def pop_override_markers(b):
     if isinstance(b, list):
         if len(b) > 0 and b[0] == '^':
@@ -441,7 +311,27 @@ def pop_override_markers(b):
     return b
 
 
-def new_get_pillars(minion_id, salt_data):
+def validate(name, data):
+    if 'classes' in data:
+        data['classes'] = [] if data['classes'] is None else data['classes']  # None -> []
+        if not isinstance(data['classes'], list):
+            raise SaltException('Classes in {} is not a valid list'.format(name))
+    if 'pillars' in data:
+        data['pillars'] = {} if data['pillars'] is None else data['pillars']  # None -> {}
+        if not isinstance(data['pillars'], dict):
+            raise SaltException('Pillars in {} is not a valid dict'.format(name))
+    if 'states' in data:
+        data['states'] = [] if data['states'] is None else data['states']  # None -> []
+        if not isinstance(data['states'], list):
+            raise SaltException('States in {} is not a valid list'.format(name))
+    if 'environment' in data:
+        data['environment'] = '' if data['environment'] is None else data['environment']  # None -> ''
+        if not isinstance(data['environment'], six.string_types):
+            raise SaltException('Environment in {} is not a valid string'.format(name))
+    return
+
+
+def get_pillars(minion_id, salt_data):
     node_data = get_node_data(minion_id, salt_data)
     pillars, classes, states, environment = get_saltclass_data(node_data, salt_data)
 
@@ -456,7 +346,8 @@ def new_get_pillars(minion_id, salt_data):
 
     return pillars_dict
 
-def new_get_tops(minion_id, salt_data):
+
+def get_tops(minion_id, salt_data):
     node_data = get_node_data(minion_id, salt_data)
     _, _, states, environment = get_saltclass_data(node_data, salt_data)
 
@@ -464,57 +355,3 @@ def new_get_tops(minion_id, salt_data):
     tops[environment] = states
 
     return tops
-
-
-def get_pillars(minion_id, salt_data):
-    # Get 2 dicts and 2 lists
-    # expanded_classes: Full list of expanded dicts
-    # pillars_dict: dict containing merged pillars in order
-    # classes_list: All classes processed in order
-    # states_list: All states listed in order
-    (expanded_classes,
-     pillars_dict,
-     classes_list,
-     states_list) = expanded_dict_from_minion(minion_id, salt_data)
-
-    # Retrieve environment
-    environment = get_env_from_dict(expanded_classes)
-
-    # Expand ${} variables in merged dict
-    # pillars key shouldn't exist if we haven't found any minion_id ref
-    if 'pillars' in pillars_dict:
-        pillars_dict_expanded = expand_variables(pop_override_markers(pillars_dict['pillars']), {}, [])
-    else:
-        pillars_dict_expanded = expand_variables({}, {}, [])
-
-    # Build the final pillars dict
-    pillars_dict = {}
-    pillars_dict['__saltclass__'] = {}
-    pillars_dict['__saltclass__']['states'] = states_list
-    pillars_dict['__saltclass__']['classes'] = classes_list
-    pillars_dict['__saltclass__']['environment'] = environment
-    pillars_dict['__saltclass__']['nodename'] = minion_id
-    pillars_dict.update(pillars_dict_expanded)
-
-    return pillars_dict
-
-
-def get_tops(minion_id, salt_data):
-    # Get 2 dicts and 2 lists
-    # expanded_classes: Full list of expanded dicts
-    # pillars_dict: dict containing merged pillars in order
-    # classes_list: All classes processed in order
-    # states_list: All states listed in order
-    (expanded_classes,
-     pillars_dict,
-     classes_list,
-     states_list) = expanded_dict_from_minion(minion_id, salt_data)
-
-    # Retrieve environment
-    environment = get_env_from_dict(expanded_classes)
-
-    # Build final top dict
-    tops_dict = {}
-    tops_dict[environment] = states_list
-
-    return tops_dict
