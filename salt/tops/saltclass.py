@@ -267,4 +267,4 @@ def top(**kwargs):
         'path': path
     }
 
-    return sc.get_tops(minion_id, salt_data)
+    return sc.new_get_tops(minion_id, salt_data)

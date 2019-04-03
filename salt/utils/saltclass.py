@@ -446,7 +446,7 @@ def new_get_pillars(minion_id, salt_data):
     pillars, classes, states, environment = get_saltclass_data(node_data, salt_data)
 
     # Build the final pillars dict
-    pillars_dict = {}
+    pillars_dict = dict()
     pillars_dict['__saltclass__'] = {}
     pillars_dict['__saltclass__']['states'] = states
     pillars_dict['__saltclass__']['classes'] = classes
@@ -455,6 +455,15 @@ def new_get_pillars(minion_id, salt_data):
     pillars_dict.update(pillars)
 
     return pillars_dict
+
+def new_get_tops(minion_id, salt_data):
+    node_data = get_node_data(minion_id, salt_data)
+    _, _, states, environment = get_saltclass_data(node_data, salt_data)
+
+    tops = dict()
+    tops[environment] = states
+
+    return tops
 
 
 def get_pillars(minion_id, salt_data):
