@@ -156,7 +156,7 @@ class SaltclassTestCase(TestCase, LoaderModuleMockMixin):
         }
         result = saltclass.ext_pillar(fake_minion_id4, nonsaltclass_pillars, fake_args)
         filtered_result = {}
-        for key in expected_result.keys():
+        for key in expected_result:
             filtered_result[key] = result.get(key)
         self.assertDictEqual(filtered_result, expected_result)
 
