@@ -19,6 +19,7 @@ fake_minion_id2 = 'fake_id2'
 fake_minion_id3 = 'fake_id3'
 fake_minion_id4 = 'fake_id4'
 fake_minion_id5 = 'fake_id5'
+fake_minion_id6 = 'fake_id6'
 
 
 fake_pillar = {}
@@ -162,3 +163,10 @@ class SaltclassTestCase(TestCase, LoaderModuleMockMixin):
 
     def test_fail(self):
         self.assertRaises(SaltException, saltclass.ext_pillar, fake_minion_id5, {}, fake_args)
+
+    def test_globbing(self):
+        result = saltclass.ext_pillar(fake_minion_id6, {}, fake_args)
+        from pprint import pprint
+        pprint(result)
+
+

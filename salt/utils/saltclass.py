@@ -39,39 +39,6 @@ def render_yaml(_file, salt_data):
     return salt.utils.yaml.safe_load(render_jinja(_file, salt_data))
 
 
-# Returns a dict from a class yaml definition
-def get_class(_class, salt_data):
-    l_files = []
-    saltclass_path = salt_data['path']
-
-    straight = os.path.join(saltclass_path,
-                            'classes',
-                            '{0}.yml'.format(_class))
-    sub_straight = os.path.join(saltclass_path,
-                                'classes',
-                                '{0}.yml'.format(_class.replace('.', os.sep)))
-    sub_init = os.path.join(saltclass_path,
-                            'classes',
-                            _class.replace('.', os.sep),
-                            'init.yml')
-
-    for root, dirs, files in salt.utils.path.os_walk(os.path.join(saltclass_path, 'classes'), followlinks=True):
-        for l_file in files:
-            l_files.append(os.path.join(root, l_file))
-
-    if straight in l_files:
-        return render_yaml(straight, salt_data)
-
-    if sub_straight in l_files:
-        return render_yaml(sub_straight, salt_data)
-
-    if sub_init in l_files:
-        return render_yaml(sub_init, salt_data)
-
-    log.warning('%s: Class definition not found', _class)
-    return {}
-
-
 # Return environment
 def get_env_from_dict(exp_dict_list):
     environment = ''
@@ -211,32 +178,115 @@ def expand_variables(a, b, expanded, path=None):
     return b
 
 
+# resolve_classes_glob return list of classes, generated from input class glob and it's parent base_class
+# can't return other globs
+# guaranteed to return list of strings or empty list
+def resolve_classes_glob(base_class, glob, salt_data):
+    base_class_init_notation = salt_data['class_paths'].get(base_class, '').endswith('init.yml')
+
+    # If base_class A.B defined with file <>/classes/A/B/init.yml glob . is ignored
+    # If base_class A.B defined with file <>/classes/A/B.yml glob . addresses
+    # class A if and only if A is defined with <>/classes/A/init.yml.
+    # I.e. glob . references local init.yml
+    if glob.strip() == '.':
+        if base_class_init_notation:
+            return []
+        else:
+            ancestor_class, _, _ = base_class.rpartition('.')
+            ancestor_class_init_notation = salt_data['class_paths'].get(ancestor_class, '').endswith('init.yml')
+            return [ancestor_class] if ancestor_class_init_notation else []
+    else:
+        glob = base_class + glob if glob.startswith('.') else glob
+    return resolve_prefix_glob(glob, salt_data)
+
+
+def resolve_prefix_glob(prefix_glob, salt_data):
+    if prefix_glob.endswith('*'):
+        result = [c for c in salt_data['class_paths'].keys() if c.startswith(prefix_glob[:-1])]
+        # Concession to usual globbing habits from operating systems:
+        # include class A.B to result of glob A.B.* resolution
+        # if the class is defined with <>/classes/A/B/init.yml (but not with <>/classes/A/B.yml!)
+        if prefix_glob.endswith('.*') and salt_data['class_paths'].get(prefix_glob[:-2], '').endswith('/init.yml'):
+            result.append(prefix_glob[:-2])
+        return result
+    else:
+        raise SaltException('Unsupported glob {}'.format(prefix_glob))
+
+
 def get_saltclass_data(node_data, salt_data):
+    salt_data['class_paths'] = {}
+    root_path = str(os.path.join(salt_data['path'], 'classes' + os.sep))
+    for dirpath, dirnames, filenames in salt.utils.path.os_walk(os.path.join(salt_data['path'], 'classes'),
+                                                                followlinks=True):
+        for filename in filenames:
+            # Die if there's an X.yml file and X directory in the same path
+            if filename[:-4] in dirnames:
+                raise SaltException('Conflict in class file structure - file {}/{} and directory {}/{}. '
+                                    .format(dirpath, filename, dirpath, filename[:-4]))
+            abs_path = os.path.join(dirpath, filename)
+            rel_path = abs_path[len(root_path):]
+            if rel_path.endswith(os.sep + 'init.yml'):
+                name = str(rel_path[:-len(os.sep + 'init.yml')]).replace(os.sep, '.')
+            else:
+                name = str(rel_path[:-len('.yml')]).replace(os.sep, '.')
+            salt_data['class_paths'][name] = abs_path
+
     # Merge minion_pillars into salt_data
     dict_merge(salt_data['__pillar__'], node_data.get('pillars', {}))
 
     # Init classes list with data from minion
-    classes = deque(reversed(node_data.get('classes', [])))
+    classes = deque()
+    for c in reversed(node_data.get('classes', [])):
+        if c.startswith('.'):
+            raise SaltException('Unsupported glob type in {} - \'{}\'. '
+                                'Only A.B* type globs are supported in node definition. '
+                                .format(salt_data['minion_id'], c))
+        elif c.endswith('*'):
+            resolved_node_glob = resolve_prefix_glob(c, salt_data)
+            for resolved_node_class in sorted(resolved_node_glob):
+                classes.appendleft(resolved_node_class)
+        else:
+            classes.appendleft(c)
 
     seen_classes = set()
     expanded_classes = OrderedDict()
 
-    #
     # Build expanded_classes OrderedDict (we'll need it later)
     # and pillars dict for a minion
-    #
+    # At this point classes queue consists only of
     while classes:
         cls = classes.pop()
+
+        # Glob resolution block
+        if isinstance(cls, tuple):
+            base_class, glob = cls
+            classes_from_glob = resolve_classes_glob(base_class, glob, salt_data)
+            for c in reversed(classes_from_glob):
+                if c not in seen_classes and c not in classes:
+                    classes.appendleft(c)
+            continue
+
+        # From here on cls is definitely not a glob
         seen_classes.add(cls)
-        expanded_class = get_class(cls, salt_data)
+        cls_filepath = salt_data['class_paths'].get(cls)
+        if not cls_filepath:
+            log.warning('%s: Class definition not found', cls)
+            continue
+        expanded_class = render_yaml(cls_filepath, salt_data)
         validate(cls, expanded_class)
         expanded_classes[cls] = expanded_class
         if 'pillars' in expanded_class and expanded_class['pillars'] is not None:
             dict_merge(salt_data['__pillar__'], expanded_class['pillars'], reverse=True)
         if 'classes' in expanded_class:
             for c in reversed(expanded_class['classes']):
-                if c not in seen_classes and c not in classes:
-                    classes.appendleft(c)
+                if c is not None and isinstance(c, six.string_types):
+                    # first - detect globs
+                    if c.endswith('*') or c.startswith('.'):
+                        classes.appendleft((cls, c))  # put ( base_class, glob ) tuple instead of string into queue
+                    elif c not in seen_classes and c not in classes:
+                        classes.appendleft(c)
+                else:
+                    raise SaltException('Nonstring item in classes list in class {} - {}. '.format(cls, str(c)))
 
     # Get ordered class and state lists from expanded_classes and minion_classes (traverse expanded_classes tree)
     def traverse(this_class, result_list):
@@ -278,18 +328,16 @@ def get_saltclass_data(node_data, salt_data):
 
 
 def get_node_data(minion_id, salt_data):
-    _file = ''
-    saltclass_path = salt_data['path']
-    # Start
-    for root, dirs, files in salt.utils.path.os_walk(os.path.join(saltclass_path, 'nodes'), followlinks=True):
-        for minion_file in files:
+    node_file = ''
+    for dirpath, _, filenames in salt.utils.path.os_walk(os.path.join(salt_data['path'], 'nodes'), followlinks=True):
+        for minion_file in filenames:
             if minion_file == '{0}.yml'.format(minion_id):
-                _file = os.path.join(root, minion_file)
+                node_file = os.path.join(dirpath, minion_file)
 
     # Load the minion_id definition if existing, else an empty dict
 
-    if _file:
-        result = render_yaml(_file, salt_data)
+    if node_file:
+        result = render_yaml(node_file, salt_data)
         validate(minion_id, result)
         return result
     else:
