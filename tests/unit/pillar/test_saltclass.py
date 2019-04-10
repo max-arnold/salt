@@ -12,7 +12,6 @@ from tests.support.mock import NO_MOCK, NO_MOCK_REASON
 # Import Salt Libs
 import salt.pillar.saltclass as saltclass
 from salt.exceptions import SaltException
-from pprint import pprint
 
 base_path = os.path.dirname(os.path.realpath(__file__))
 fake_minion_id1 = 'fake_id1'
@@ -34,7 +33,8 @@ fake_grains = {}
 @skipIf(NO_MOCK, NO_MOCK_REASON)
 class SaltclassTestCase(TestCase, LoaderModuleMockMixin):
     '''
-    New tests for salt.pillar.saltclass
+    Tests for salt.pillar.saltclass
+    TODO: change node and class names in mocks to make them more readable - all these A, B, C, X, L0 are unreadable
     '''
 
     def setup_loader_modules(self):
@@ -213,11 +213,3 @@ class SaltclassTestCase(TestCase, LoaderModuleMockMixin):
                                                         'D1',
                                                         'D-init']}}
         self.assertDictEqual(result, expected_result)
-
-    """
-    def test_print(self):
-        for i in [1, 2, 3, 4, 6]:
-            print(' ---------------- fake_minion_id{} ---------------- '.format(i))
-            pprint(saltclass.ext_pillar('fake_id{}'.format(i), {}, fake_args))
-            print(' ++++++++++++++++++++++++++++++++++++++++++++++++++ ')
-    """

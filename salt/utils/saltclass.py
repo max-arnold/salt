@@ -21,8 +21,7 @@ from collections import deque, OrderedDict
 log = logging.getLogger(__name__)
 
 
-# Renders jinja from a template file
-def render_jinja(_file, salt_data):
+def _render_jinja(_file, salt_data):
     j_env = Environment(loader=FileSystemLoader(os.path.dirname(_file)))
     j_env.globals.update({
         '__opts__': salt_data['__opts__'],
@@ -35,11 +34,10 @@ def render_jinja(_file, salt_data):
     return j_render
 
 
-# Renders yaml from rendered jinja
-def render_yaml(_file, salt_data):
+def _render_yaml(_file, salt_data):
     result = None
     try:
-        result = salt.utils.yaml.safe_load(render_jinja(_file, salt_data))
+        result = salt.utils.yaml.safe_load(_render_jinja(_file, salt_data))
     except YAMLError as e:
         log.error('YAML rendering exception for file %s:\n%s', _file, e)
     if result is None:
@@ -48,17 +46,10 @@ def render_yaml(_file, salt_data):
     return result
 
 
-# Return environment
-def get_env_from_dict(exp_dict_list):
-    environment = ''
-    for s_class in exp_dict_list:
-        if 'environment' in s_class:
-            environment = s_class['environment']
-    return environment
-
-
-# m_target <---merge-into---- m_object
-def dict_merge(m_target, m_object, path=None, reverse=False):
+def _dict_merge(m_target, m_object, path=None, reverse=False):
+    '''
+    Merge m_target <---merge-into---- m_object recursively. Override (^) logic here.
+    '''
     if path is None:
         path = []
 
@@ -80,7 +71,7 @@ def dict_merge(m_target, m_object, path=None, reverse=False):
                     else:
                         m_target[key][0:0] = m_object[key]
             elif isinstance(m_target[key], dict) and isinstance(m_object[key], dict):
-                dict_merge(m_target[key], m_object[key], path + [six.text_type(key)], reverse=reverse)
+                _dict_merge(m_target[key], m_object[key], path + [six.text_type(key)], reverse=reverse)
             elif m_target[key] == m_object[key]:
                 pass
             else:
@@ -96,29 +87,33 @@ def dict_merge(m_target, m_object, path=None, reverse=False):
     return m_target
 
 
-# Recursive search and replace in a dict
-def dict_search_and_replace(D, old, new, expanded):
-    for (k, v) in six.iteritems(D):
+def _dict_search_and_replace(d, old, new, expanded):
+    '''
+    Recursive search and replace in a dict. Used to expand ${xx:yy:zz}.
+    '''
+    for (k, v) in six.iteritems(d):
         if isinstance(v, dict):
-            dict_search_and_replace(D[k], old, new, expanded)
+            _dict_search_and_replace(d[k], old, new, expanded)
 
         if isinstance(v, list):
             x = 0
             for i in v:
                 if isinstance(i, dict):
-                    dict_search_and_replace(v[x], old, new, expanded)
+                    _dict_search_and_replace(v[x], old, new, expanded)
                 if isinstance(i, six.string_types):
                     if i == old:
                         v[x] = new
                 x = x + 1
         if v == old:
-            D[k] = new
+            d[k] = new
 
-    return D
+    return d
 
 
-# Retrieve original value from ${xx:yy:zz} to be expanded
-def find_value_to_expand(x, v):
+def _find_value_to_expand(x, v):
+    '''
+    Retrieve original value from ${xx:yy:zz} to be expanded
+    '''
     a = x
     for i in v[2:-1].split(':'):
         if a is None:
@@ -132,24 +127,26 @@ def find_value_to_expand(x, v):
 
 # TODO: refactor this please!
 # Look for regexes and expand them
-def find_and_process_re(_str, v, k, b, expanded):
+def _find_and_process_re(_str, v, k, b, expanded):
+    '''
+    Look for regexes and expand them
+    '''
     vre = re.finditer(r'(^|.)\$\{.*?\}', _str)
     if vre:
         for re_v in vre:
             re_str = str(re_v.group())
             if re_str.startswith('\\'):
                 v_new = _str.replace(re_str, re_str.lstrip('\\'))
-                b = dict_search_and_replace(b, _str, v_new, expanded)
+                b = _dict_search_and_replace(b, _str, v_new, expanded)
                 expanded.append(k)
             elif not re_str.startswith('$'):
-                v_expanded = find_value_to_expand(b, re_str[1:])
+                v_expanded = _find_value_to_expand(b, re_str[1:])
                 v_new = _str.replace(re_str[1:], v_expanded)
-                b = dict_search_and_replace(b, _str, v_new, expanded)
+                b = _dict_search_and_replace(b, _str, v_new, expanded)
                 _str = v_new
                 expanded.append(k)
             else:
-                v_expanded = find_value_to_expand(b, re_str)
-                # TODO: refactor is badly needed here!
+                v_expanded = _find_value_to_expand(b, re_str)
                 if isinstance(v_expanded, (list, dict)):
                     v_new = v_expanded
                 # Have no idea why do we need two variables of the same - _str and v
@@ -157,41 +154,103 @@ def find_and_process_re(_str, v, k, b, expanded):
                     v_new = v.replace(re_str, v_expanded)
                 else:
                     v_new = _str.replace(re_str, v_expanded)
-                b = dict_search_and_replace(b, _str, v_new, expanded)
+                b = _dict_search_and_replace(b, _str, v_new, expanded)
                 _str = v_new
                 v = v_new
                 expanded.append(k)
     return b
 
 
-# Return a dict that contains expanded variables if found
-def expand_variables(a, b, expanded, path=None):
+# TODO: refactor this please!
+def _expand_variables(a, b, expanded, path=None):
+    '''
+    :return: dict that contains expanded variables if found
+    '''
     if path is None:
         b = a.copy()
         path = []
 
     for (k, v) in six.iteritems(a):
         if isinstance(v, dict):
-            expand_variables(v, b, expanded, path + [six.text_type(k)])
+            _expand_variables(v, b, expanded, path + [six.text_type(k)])
         else:
             if isinstance(v, list):
                 for i in v:
                     if isinstance(i, dict):
-                        expand_variables(i, b, expanded, path + [str(k)])
+                        _expand_variables(i, b, expanded, path + [str(k)])
                     if isinstance(i, six.string_types):
-                        b = find_and_process_re(i, v, k, b, expanded)
+                        b = _find_and_process_re(i, v, k, b, expanded)
 
             if isinstance(v, six.string_types):
-                b = find_and_process_re(v, v, k, b, expanded)
+                b = _find_and_process_re(v, v, k, b, expanded)
     return b
+
+
+def _pop_override_markers(b):
+    '''
+    Remove orphaned list override markers (^) if found
+    '''
+    if isinstance(b, list):
+        if len(b) > 0 and b[0] == '^':
+            b.pop(0)
+        elif len(b) > 0 and b[0] == r'\^':
+            b[0] = '^'
+        for sub in b:
+            _pop_override_markers(sub)
+    elif isinstance(b, dict):
+        for sub in b.values():
+            _pop_override_markers(sub)
+    return b
+
+
+def _validate(name, data):
+    '''
+    Make sure classes, pillars, states and environment are of appropriate data types
+    '''
+    if 'classes' in data:
+        data['classes'] = [] if data['classes'] is None else data['classes']  # None -> []
+        if not isinstance(data['classes'], list):
+            raise SaltException('Classes in {} is not a valid list'.format(name))
+    if 'pillars' in data:
+        data['pillars'] = {} if data['pillars'] is None else data['pillars']  # None -> {}
+        if not isinstance(data['pillars'], dict):
+            raise SaltException('Pillars in {} is not a valid dict'.format(name))
+    if 'states' in data:
+        data['states'] = [] if data['states'] is None else data['states']  # None -> []
+        if not isinstance(data['states'], list):
+            raise SaltException('States in {} is not a valid list'.format(name))
+    if 'environment' in data:
+        data['environment'] = '' if data['environment'] is None else data['environment']  # None -> ''
+        if not isinstance(data['environment'], six.string_types):
+            raise SaltException('Environment in {} is not a valid string'.format(name))
+    return
+
+
+def _resolve_prefix_glob(prefix_glob, salt_data):
+    '''
+    Resolves prefix globs
+    '''
+    result = [c for c in salt_data['class_paths'].keys() if c.startswith(prefix_glob[:-1])]
+
+    # Concession to usual globbing habits from operating systems:
+    # include class A.B to result of glob A.B.* resolution
+    # if the class is defined with <>/classes/A/B/init.yml (but not with <>/classes/A/B.yml!)
+    # TODO: should we remove this? We already fail hard if there's a B.yml file and B directory in the same path
+    if prefix_glob.endswith('.*') and salt_data['class_paths'].get(prefix_glob[:-2], '').endswith('/init.yml'):
+        result.append(prefix_glob[:-2])
+    return result
 
 
 def resolve_classes_glob(base_class, glob, salt_data):
     '''
     Finds classes for the glob. Can't return other globs.
 
-    :param str base_class: class where glob was found in
-    :param str glob: prefix glob (A.B.* or A.B*), suffix glob (.A.B) or both (.A.B.*)
+    :param str base_class: class where glob was found in - we need this information to resolve suffix globs
+    :param str glob:
+    - prefix glob - A.B.* or A.B*
+    - suffix glob - .A.B
+    - combination of both - .A.B.*
+    - special - . (single dot) - to address "local" init.yml - the one found in the same directory
     :param dict salt_data: salt_data
     :return: list of strings or empty list - classes, resolved from the glob
     '''
@@ -216,38 +275,21 @@ def resolve_classes_glob(base_class, glob, salt_data):
         if glob.endswith('*'):
             return _resolve_prefix_glob(glob, salt_data)
         else:
-            return [glob]   # if we're here glob is not glob anymore but actual class name
-
-
-def get_node_classes(node_data, salt_data):
-    result = deque()
-    for c in node_data.get('classes', []):
-        if c.startswith('.'):
-            raise SaltException('Unsupported glob type in {} - \'{}\'. '
-                                'Only A.B* type globs are supported in node definition. '
-                                .format(salt_data['minion_id'], c))
-        elif c.endswith('*'):
-            resolved_node_glob = _resolve_prefix_glob(c, salt_data)
-            for resolved_node_class in sorted(resolved_node_glob):
-                result.append(resolved_node_class)
-        else:
-            result.appendleft(c)
-    return result
-
-
-def _resolve_prefix_glob(prefix_glob, salt_data):
-    result = [c for c in salt_data['class_paths'].keys() if c.startswith(prefix_glob[:-1])]
-
-    # Concession to usual globbing habits from operating systems:
-    # include class A.B to result of glob A.B.* resolution
-    # if the class is defined with <>/classes/A/B/init.yml (but not with <>/classes/A/B.yml!)
-    # TODO: should we remove this? We already fail hard if there's a B.yml file and B directory in the same path
-    if prefix_glob.endswith('.*') and salt_data['class_paths'].get(prefix_glob[:-2], '').endswith('/init.yml'):
-        result.append(prefix_glob[:-2])
-    return result
+            return [glob]  # if we're here glob is not glob anymore but actual class name
 
 
 def get_saltclass_data(node_data, salt_data):
+    '''
+    Main function. Short explanation of the algorithm for the most curious ones:
+    - build `salt_data['class_paths']` - OrderedDict( name of class : absolute path to it's file ) sorted by keys
+    - merge pillars found in node definition into existing from previous ext_pillars
+    - initialize `classes` deque of class names with data from node
+    - loop through `classes` until it's not emptied: pop class names `cls` from the end, expand, get nested classes,
+      resolve globs if needed, put them to the beginning of queue
+    - since all classes has already been expanded on the previous step, we simply traverse `expanded_classes` dict
+      as a tree depth-first to build `ordered_class_list` and then it's fairly simple
+    :return: dict pillars, list classes, list states, str environment
+    '''
     salt_data['class_paths'] = {}
     for dirpath, dirnames, filenames in salt.utils.path.os_walk(os.path.join(salt_data['path'], 'classes'),
                                                                 followlinks=True):
@@ -266,9 +308,9 @@ def get_saltclass_data(node_data, salt_data):
     salt_data['class_paths'] = OrderedDict(sorted(salt_data['class_paths'].iteritems(), key=lambda (k, v): k))
 
     # Merge minion_pillars into salt_data
-    dict_merge(salt_data['__pillar__'], node_data.get('pillars', {}))
+    _dict_merge(salt_data['__pillar__'], node_data.get('pillars', {}))
 
-    # Init classes list with data from minion
+    # Init classes queue with data from minion
     classes = get_node_classes(node_data, salt_data)
 
     seen_classes = set()
@@ -285,11 +327,11 @@ def get_saltclass_data(node_data, salt_data):
         if not cls_filepath:
             log.warning('%s: Class definition not found', cls)
             continue
-        expanded_class = render_yaml(cls_filepath, salt_data)
-        validate(cls, expanded_class)
+        expanded_class = _render_yaml(cls_filepath, salt_data)
+        _validate(cls, expanded_class)
         expanded_classes[cls] = expanded_class
         if 'pillars' in expanded_class and expanded_class['pillars'] is not None:
-            dict_merge(salt_data['__pillar__'], expanded_class['pillars'], reverse=True)
+            _dict_merge(salt_data['__pillar__'], expanded_class['pillars'], reverse=True)
         if 'classes' in expanded_class:
             resolved_classes = []
             for c in reversed(expanded_class['classes']):
@@ -341,13 +383,16 @@ def get_saltclass_data(node_data, salt_data):
                 ordered_state_list.append(state)
 
     # Expand ${xx:yy:zz} here and pop override (^) markers
-    salt_data['__pillar__'] = expand_variables(pop_override_markers(salt_data['__pillar__']), {}, [])
+    salt_data['__pillar__'] = _expand_variables(_pop_override_markers(salt_data['__pillar__']), {}, [])
     salt_data['__classes__'] = ordered_class_list
     salt_data['__states__'] = ordered_state_list
     return salt_data['__pillar__'], salt_data['__classes__'], salt_data['__states__'], environment
 
 
 def get_node_data(minion_id, salt_data):
+    '''
+    Build node_data structure from node definition file
+    '''
     node_file = ''
     for dirpath, _, filenames in salt.utils.path.os_walk(os.path.join(salt_data['path'], 'nodes'), followlinks=True):
         for minion_file in filenames:
@@ -357,49 +402,39 @@ def get_node_data(minion_id, salt_data):
     # Load the minion_id definition if existing, else an empty dict
 
     if node_file:
-        result = render_yaml(node_file, salt_data)
-        validate(minion_id, result)
+        result = _render_yaml(node_file, salt_data)
+        _validate(minion_id, result)
         return result
     else:
         log.info('%s: Node definition not found in saltclass', minion_id)
         return {}
 
 
-def pop_override_markers(b):
-    if isinstance(b, list):
-        if len(b) > 0 and b[0] == '^':
-            b.pop(0)
-        elif len(b) > 0 and b[0] == r'\^':
-            b[0] = '^'
-        for sub in b:
-            pop_override_markers(sub)
-    elif isinstance(b, dict):
-        for sub in b.values():
-            pop_override_markers(sub)
-    return b
-
-
-def validate(name, data):
-    if 'classes' in data:
-        data['classes'] = [] if data['classes'] is None else data['classes']  # None -> []
-        if not isinstance(data['classes'], list):
-            raise SaltException('Classes in {} is not a valid list'.format(name))
-    if 'pillars' in data:
-        data['pillars'] = {} if data['pillars'] is None else data['pillars']  # None -> {}
-        if not isinstance(data['pillars'], dict):
-            raise SaltException('Pillars in {} is not a valid dict'.format(name))
-    if 'states' in data:
-        data['states'] = [] if data['states'] is None else data['states']  # None -> []
-        if not isinstance(data['states'], list):
-            raise SaltException('States in {} is not a valid list'.format(name))
-    if 'environment' in data:
-        data['environment'] = '' if data['environment'] is None else data['environment']  # None -> ''
-        if not isinstance(data['environment'], six.string_types):
-            raise SaltException('Environment in {} is not a valid string'.format(name))
-    return
+def get_node_classes(node_data, salt_data):
+    '''
+    Extract classes from node_data structure. Resolve here all globs found in it. Can't do it with resolve_classes_glob
+    since node globs are more strict and support prefix globs only.
+    :return: deque with extracted classes
+    '''
+    result = deque()
+    for c in node_data.get('classes', []):
+        if c.startswith('.'):
+            raise SaltException('Unsupported glob type in {} - \'{}\'. '
+                                'Only A.B* type globs are supported in node definition. '
+                                .format(salt_data['minion_id'], c))
+        elif c.endswith('*'):
+            resolved_node_glob = _resolve_prefix_glob(c, salt_data)
+            for resolved_node_class in sorted(resolved_node_glob):
+                result.append(resolved_node_class)
+        else:
+            result.appendleft(c)
+    return result
 
 
 def get_pillars(minion_id, salt_data):
+    '''
+    :return: dict of pillars with additional meta field __saltclass__ which has info about classes, states, and env
+    '''
     node_data = get_node_data(minion_id, salt_data)
     pillars, classes, states, environment = get_saltclass_data(node_data, salt_data)
 
@@ -416,6 +451,9 @@ def get_pillars(minion_id, salt_data):
 
 
 def get_tops(minion_id, salt_data):
+    '''
+    :return: list of states for a minion
+    '''
     node_data = get_node_data(minion_id, salt_data)
     _, _, states, environment = get_saltclass_data(node_data, salt_data)
 
