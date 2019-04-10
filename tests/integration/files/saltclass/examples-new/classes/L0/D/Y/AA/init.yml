@@ -1,5 +1,5 @@
 pillars:
-  C3: absent
+  absent: absent
 
 states:
   - absent

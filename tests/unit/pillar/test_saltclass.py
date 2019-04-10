@@ -12,6 +12,7 @@ from tests.support.mock import NO_MOCK, NO_MOCK_REASON
 # Import Salt Libs
 import salt.pillar.saltclass as saltclass
 from salt.exceptions import SaltException
+from pprint import pprint
 
 base_path = os.path.dirname(os.path.realpath(__file__))
 fake_minion_id1 = 'fake_id1'
@@ -21,11 +22,10 @@ fake_minion_id4 = 'fake_id4'
 fake_minion_id5 = 'fake_id5'
 fake_minion_id6 = 'fake_id6'
 
-
 fake_pillar = {}
 fake_args = ({'path': os.path.abspath(
-                        os.path.join(base_path, '..', '..', 'integration',
-                                     'files', 'saltclass', 'examples-new'))})
+    os.path.join(base_path, '..', '..', 'integration',
+                 'files', 'saltclass', 'examples-new'))})
 fake_opts = {}
 fake_salt = {}
 fake_grains = {}
@@ -166,7 +166,58 @@ class SaltclassTestCase(TestCase, LoaderModuleMockMixin):
 
     def test_globbing(self):
         result = saltclass.ext_pillar(fake_minion_id6, {}, fake_args)
-        from pprint import pprint
-        pprint(result)
+        expected_result = {'A1': 'A1',
+                           'A2': 'A2',
+                           'A3': 'A3',
+                           'B-init': 'B-init',
+                           'B1': 'B1',
+                           'B2': 'B2',
+                           'B3': 'B3',
+                           'C': 'C',
+                           'C1': 'C1',
+                           'C2': 'C2',
+                           'D-init': 'D-init',
+                           'D1': 'D1',
+                           'X': 'X',
+                           'X-init': 'X-init',
+                           '__saltclass__': {'classes': ['L0.D.X',
+                                                         'L0.D.X.X',
+                                                         'L0.D.Y.B',
+                                                         'L0.D.Y.B.B1',
+                                                         'L0.D.Y.B.B2',
+                                                         'L0.D.Y.B.B3',
+                                                         'L0.D.Y.A.A1',
+                                                         'L0.D.Y.A.A2',
+                                                         'L0.D.Y.A.A3',
+                                                         'L0.D.Y.C.C',
+                                                         'L0.D.Y.C.C1',
+                                                         'L0.D.Y.C.C2',
+                                                         'L0.D.Y.D.D1',
+                                                         'L0.D.Y.D'],
+                                             'environment': 'base',
+                                             'nodename': 'fake_id6',
+                                             'states': ['X-init',
+                                                        'X',
+                                                        'B-init',
+                                                        'B1',
+                                                        'B2',
+                                                        'B3',
+                                                        'A11',
+                                                        'A12',
+                                                        'A2',
+                                                        'A31',
+                                                        'A32',
+                                                        'C',
+                                                        'C1',
+                                                        'C2',
+                                                        'D1',
+                                                        'D-init']}}
+        self.assertDictEqual(result, expected_result)
 
-
+    """
+    def test_print(self):
+        for i in [1, 2, 3, 4, 6]:
+            print(' ---------------- fake_minion_id{} ---------------- '.format(i))
+            pprint(saltclass.ext_pillar('fake_id{}'.format(i), {}, fake_args))
+            print(' ++++++++++++++++++++++++++++++++++++++++++++++++++ ')
+    """

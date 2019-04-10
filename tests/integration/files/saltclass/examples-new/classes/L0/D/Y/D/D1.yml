@@ -3,3 +3,6 @@ classes:
 
 pillars:
   D1: D1
+
+states:
+  - D1

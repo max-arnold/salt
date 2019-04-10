@@ -1,2 +1,5 @@
 pillars:
   A2: A2
+
+states:
+  - A2

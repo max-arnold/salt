@@ -3,3 +3,6 @@ classes:
 
 pillars:
   D-init: D-init
+
+states:
+  - D-init

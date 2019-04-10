@@ -10,6 +10,7 @@ from jinja2 import FileSystemLoader, Environment
 import salt.utils.path
 import salt.utils.yaml
 from salt.exceptions import SaltException
+from yaml.error import YAMLError
 
 # Import 3rd-party libs
 from salt.ext import six
@@ -36,7 +37,15 @@ def render_jinja(_file, salt_data):
 
 # Renders yaml from rendered jinja
 def render_yaml(_file, salt_data):
-    return salt.utils.yaml.safe_load(render_jinja(_file, salt_data))
+    result = None
+    try:
+        result = salt.utils.yaml.safe_load(render_jinja(_file, salt_data))
+    except YAMLError as e:
+        log.error('YAML rendering exception for file %s:\n%s', _file, e)
+    if result is None:
+        log.warning('Unable to render yaml from %s', _file)
+        return {}
+    return result
 
 
 # Return environment
@@ -48,50 +57,50 @@ def get_env_from_dict(exp_dict_list):
     return environment
 
 
-# Merge dict b into a
-def dict_merge(a, b, path=None, reverse=False):
+# m_target <---merge-into---- m_object
+def dict_merge(m_target, m_object, path=None, reverse=False):
     if path is None:
         path = []
 
-    for key in b:
-        if key in a:
-            if isinstance(a[key], list) and isinstance(b[key], list):
+    for key in m_object:
+        if key in m_target:
+            if isinstance(m_target[key], list) and isinstance(m_object[key], list):
                 if not reverse:
-                    if b[key][0] == '^':
-                        b[key].pop(0)
-                        a[key] = b[key]
+                    if m_object[key][0] == '^':
+                        m_object[key].pop(0)
+                        m_target[key] = m_object[key]
                     else:
-                        a[key].extend(b[key])
+                        m_target[key].extend(m_object[key])
                 else:
                     # In reverse=True mode if target list (from higher level class)
                     # already has ^ , then we do nothing
-                    if a[key][0] == '^':
+                    if m_target[key][0] == '^':
                         pass
                     # if it doesn't - merge to the beginning
                     else:
-                        a[key][0:0] = b[key]
-            elif isinstance(a[key], dict) and isinstance(b[key], dict):
-                dict_merge(a[key], b[key], path + [six.text_type(key)], reverse=reverse)
-            elif a[key] == b[key]:
+                        m_target[key][0:0] = m_object[key]
+            elif isinstance(m_target[key], dict) and isinstance(m_object[key], dict):
+                dict_merge(m_target[key], m_object[key], path + [six.text_type(key)], reverse=reverse)
+            elif m_target[key] == m_object[key]:
                 pass
             else:
                 # If we're here a and b has different types.
                 # Update in case reverse=True
                 if not reverse:
-                    a[key] = b[key]
+                    m_target[key] = m_object[key]
                 # And just pass in case reverse=False since key a already has data from higher levels
                 else:
                     pass
         else:
-            a[key] = b[key]
-    return a
+            m_target[key] = m_object[key]
+    return m_target
 
 
 # Recursive search and replace in a dict
-def dict_search_and_replace(d, old, new, expanded):
-    for (k, v) in six.iteritems(d):
+def dict_search_and_replace(D, old, new, expanded):
+    for (k, v) in six.iteritems(D):
         if isinstance(v, dict):
-            dict_search_and_replace(d[k], old, new, expanded)
+            dict_search_and_replace(D[k], old, new, expanded)
 
         if isinstance(v, list):
             x = 0
@@ -102,11 +111,10 @@ def dict_search_and_replace(d, old, new, expanded):
                     if i == old:
                         v[x] = new
                 x = x + 1
-
         if v == old:
-            d[k] = new
+            D[k] = new
 
-    return d
+    return D
 
 
 # Retrieve original value from ${xx:yy:zz} to be expanded
@@ -178,44 +186,69 @@ def expand_variables(a, b, expanded, path=None):
     return b
 
 
-# resolve_classes_glob return list of classes, generated from input class glob and it's parent base_class
-# can't return other globs
-# guaranteed to return list of strings or empty list
 def resolve_classes_glob(base_class, glob, salt_data):
-    base_class_init_notation = salt_data['class_paths'].get(base_class, '').endswith('init.yml')
+    '''
+    Finds classes for the glob. Can't return other globs.
 
-    # If base_class A.B defined with file <>/classes/A/B/init.yml glob . is ignored
-    # If base_class A.B defined with file <>/classes/A/B.yml glob . addresses
+    :param str base_class: class where glob was found in
+    :param str glob: prefix glob (A.B.* or A.B*), suffix glob (.A.B) or both (.A.B.*)
+    :param dict salt_data: salt_data
+    :return: list of strings or empty list - classes, resolved from the glob
+    '''
+    base_class_init_notation = salt_data['class_paths'].get(base_class, '').endswith('init.yml')
+    ancestor_class, _, _ = base_class.rpartition('.')
+
+    # If base_class A.B defined with file <>/classes/A/B/init.yml, glob . is ignored
+    # If base_class A.B defined with file <>/classes/A/B.yml, glob . addresses
     # class A if and only if A is defined with <>/classes/A/init.yml.
-    # I.e. glob . references local init.yml
+    # I.e. glob . references neighbour init.yml
     if glob.strip() == '.':
         if base_class_init_notation:
             return []
         else:
-            ancestor_class, _, _ = base_class.rpartition('.')
             ancestor_class_init_notation = salt_data['class_paths'].get(ancestor_class, '').endswith('init.yml')
             return [ancestor_class] if ancestor_class_init_notation else []
     else:
-        glob = base_class + glob if glob.startswith('.') else glob
-    return resolve_prefix_glob(glob, salt_data)
+        if not base_class_init_notation:
+            base_class = ancestor_class
+        if glob.startswith('.'):
+            glob = base_class + glob
+        if glob.endswith('*'):
+            return _resolve_prefix_glob(glob, salt_data)
+        else:
+            return [glob]   # if we're here glob is not glob anymore but actual class name
 
 
-def resolve_prefix_glob(prefix_glob, salt_data):
-    if prefix_glob.endswith('*'):
-        result = [c for c in salt_data['class_paths'].keys() if c.startswith(prefix_glob[:-1])]
-        # Concession to usual globbing habits from operating systems:
-        # include class A.B to result of glob A.B.* resolution
-        # if the class is defined with <>/classes/A/B/init.yml (but not with <>/classes/A/B.yml!)
-        if prefix_glob.endswith('.*') and salt_data['class_paths'].get(prefix_glob[:-2], '').endswith('/init.yml'):
-            result.append(prefix_glob[:-2])
-        return result
-    else:
-        raise SaltException('Unsupported glob {}'.format(prefix_glob))
+def get_node_classes(node_data, salt_data):
+    result = deque()
+    for c in node_data.get('classes', []):
+        if c.startswith('.'):
+            raise SaltException('Unsupported glob type in {} - \'{}\'. '
+                                'Only A.B* type globs are supported in node definition. '
+                                .format(salt_data['minion_id'], c))
+        elif c.endswith('*'):
+            resolved_node_glob = _resolve_prefix_glob(c, salt_data)
+            for resolved_node_class in sorted(resolved_node_glob):
+                result.append(resolved_node_class)
+        else:
+            result.appendleft(c)
+    return result
+
+
+def _resolve_prefix_glob(prefix_glob, salt_data):
+    result = [c for c in salt_data['class_paths'].keys() if c.startswith(prefix_glob[:-1])]
+
+    # Concession to usual globbing habits from operating systems:
+    # include class A.B to result of glob A.B.* resolution
+    # if the class is defined with <>/classes/A/B/init.yml (but not with <>/classes/A/B.yml!)
+    # TODO: should we remove this? We already fail hard if there's a B.yml file and B directory in the same path
+    if prefix_glob.endswith('.*') and salt_data['class_paths'].get(prefix_glob[:-2], '').endswith('/init.yml'):
+        result.append(prefix_glob[:-2])
+    return result
 
 
 def get_saltclass_data(node_data, salt_data):
     salt_data['class_paths'] = {}
-    root_path = str(os.path.join(salt_data['path'], 'classes' + os.sep))
     for dirpath, dirnames, filenames in salt.utils.path.os_walk(os.path.join(salt_data['path'], 'classes'),
                                                                 followlinks=True):
         for filename in filenames:
@@ -224,29 +257,19 @@ def get_saltclass_data(node_data, salt_data):
                 raise SaltException('Conflict in class file structure - file {}/{} and directory {}/{}. '
                                     .format(dirpath, filename, dirpath, filename[:-4]))
             abs_path = os.path.join(dirpath, filename)
-            rel_path = abs_path[len(root_path):]
+            rel_path = abs_path[len(str(os.path.join(salt_data['path'], 'classes' + os.sep))):]
             if rel_path.endswith(os.sep + 'init.yml'):
                 name = str(rel_path[:-len(os.sep + 'init.yml')]).replace(os.sep, '.')
             else:
                 name = str(rel_path[:-len('.yml')]).replace(os.sep, '.')
             salt_data['class_paths'][name] = abs_path
+    salt_data['class_paths'] = OrderedDict(sorted(salt_data['class_paths'].iteritems(), key=lambda (k, v): k))
 
     # Merge minion_pillars into salt_data
     dict_merge(salt_data['__pillar__'], node_data.get('pillars', {}))
 
     # Init classes list with data from minion
-    classes = deque()
-    for c in reversed(node_data.get('classes', [])):
-        if c.startswith('.'):
-            raise SaltException('Unsupported glob type in {} - \'{}\'. '
-                                'Only A.B* type globs are supported in node definition. '
-                                .format(salt_data['minion_id'], c))
-        elif c.endswith('*'):
-            resolved_node_glob = resolve_prefix_glob(c, salt_data)
-            for resolved_node_class in sorted(resolved_node_glob):
-                classes.appendleft(resolved_node_class)
-        else:
-            classes.appendleft(c)
+    classes = get_node_classes(node_data, salt_data)
 
     seen_classes = set()
     expanded_classes = OrderedDict()
@@ -256,16 +279,6 @@ def get_saltclass_data(node_data, salt_data):
     # At this point classes queue consists only of
     while classes:
         cls = classes.pop()
-
-        # Glob resolution block
-        if isinstance(cls, tuple):
-            base_class, glob = cls
-            classes_from_glob = resolve_classes_glob(base_class, glob, salt_data)
-            for c in reversed(classes_from_glob):
-                if c not in seen_classes and c not in classes:
-                    classes.appendleft(c)
-            continue
-
         # From here on cls is definitely not a glob
         seen_classes.add(cls)
         cls_filepath = salt_data['class_paths'].get(cls)
@@ -278,15 +291,22 @@ def get_saltclass_data(node_data, salt_data):
         if 'pillars' in expanded_class and expanded_class['pillars'] is not None:
             dict_merge(salt_data['__pillar__'], expanded_class['pillars'], reverse=True)
         if 'classes' in expanded_class:
+            resolved_classes = []
             for c in reversed(expanded_class['classes']):
                 if c is not None and isinstance(c, six.string_types):
-                    # first - detect globs
+                    # Resolve globs
                     if c.endswith('*') or c.startswith('.'):
-                        classes.appendleft((cls, c))  # put ( base_class, glob ) tuple instead of string into queue
+                        classes_from_glob = resolve_classes_glob(cls, c, salt_data)
+                        classes_from_glob_filtered = [n for n in classes_from_glob
+                                                      if n not in seen_classes and n not in classes]
+                        classes.extendleft(classes_from_glob_filtered)
+                        resolved_classes.extend(reversed(classes_from_glob_filtered))
                     elif c not in seen_classes and c not in classes:
                         classes.appendleft(c)
+                        resolved_classes.append(c)
                 else:
                     raise SaltException('Nonstring item in classes list in class {} - {}. '.format(cls, str(c)))
+                expanded_class['classes'] = reversed(resolved_classes)
 
     # Get ordered class and state lists from expanded_classes and minion_classes (traverse expanded_classes tree)
     def traverse(this_class, result_list):
@@ -297,7 +317,7 @@ def get_saltclass_data(node_data, salt_data):
 
     # Start with node_data classes again, since we need to retain order
     ordered_class_list = []
-    for cls in node_data.get('classes', []):
+    for cls in get_node_classes(node_data, salt_data):
         traverse(cls, ordered_class_list)
 
     # Remove duplicates
@@ -309,7 +329,7 @@ def get_saltclass_data(node_data, salt_data):
 
     # Build state list and get 'environment' variable
     ordered_state_list = node_data.get('states', [])
-    environment = ''
+    environment = node_data.get('environment', '')
     for cls in ordered_class_list:
         class_states = expanded_classes.get(cls, {}).get('states', [])
         if not environment:
