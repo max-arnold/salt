@@ -40,7 +40,6 @@ def top(**kwargs):
     #     - __salt__
     #     - __grains__
     #     - __pillar__
-    #     - minion_id
     #     - path
     #
     # If successful, the function will return a top dict for minion_id.

@@ -40,7 +40,6 @@ def ext_pillar(minion_id, pillar, *args, **kwargs):
     #     - __salt__
     #     - __grains__
     #     - __pillar__
-    #     - minion_id
     #     - path
     #
     # If successful, the function will return a pillar dict for minion_id.
@@ -60,7 +59,6 @@ def ext_pillar(minion_id, pillar, *args, **kwargs):
         "__salt__": __salt__,
         "__grains__": __grains__,
         "__pillar__": pillar,
-        "minion_id": minion_id,
         "path": path,
     }
     return __utils__["saltclass.get_pillars"](minion_id, salt_data)

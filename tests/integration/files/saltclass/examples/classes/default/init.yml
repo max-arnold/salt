@@ -10,7 +10,7 @@ pillars:
   default:
     network:
       dns:
-{% if __grains__['os'] == 'should_never_match' %}
+{% if grains['os'] == 'should_never_match' %}
         srv1: 192.168.0.1
         srv2: 192.168.0.2
         domain: example.com

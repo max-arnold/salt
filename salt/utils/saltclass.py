@@ -18,15 +18,14 @@ log = logging.getLogger(__name__)
 
 
 # Renders jinja from a template file
-def render_jinja(_file, salt_data):
+def _render_jinja(_file, salt_data):
     j_env = Environment(loader=FileSystemLoader(os.path.dirname(_file)))
     j_env.globals.update(
         {
-            "__opts__": salt_data["__opts__"],
-            "__salt__": salt_data["__salt__"],
-            "__grains__": salt_data["__grains__"],
-            "__pillar__": salt_data["__pillar__"],
-            "minion_id": salt_data["minion_id"],
+            "opts": salt_data["__opts__"],
+            "salt": salt_data["__salt__"],
+            "grains": salt_data["__grains__"],
+            "pillar": salt_data["__pillar__"],
         }
     )
     j_render = j_env.get_template(os.path.basename(_file)).render()
@@ -35,7 +34,7 @@ def render_jinja(_file, salt_data):
 
 # Renders yaml from rendered jinja
 def render_yaml(_file, salt_data):
-    return salt.utils.yaml.safe_load(render_jinja(_file, salt_data))
+    return salt.utils.yaml.safe_load(_render_jinja(_file, salt_data))
 
 
 # Returns a dict from a class yaml definition
