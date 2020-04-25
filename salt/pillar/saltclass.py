@@ -8,8 +8,10 @@ SaltClass Pillar Module
     ext_pillar:
       - saltclass:
         - path: /srv/saltclass
+    # Optionally pass through GPG decryption
+    # - gpg: {}
 
-For additional configuration instructions, see the :mod:`saltclass <salt.tops.saltclass>` module
+For additional configuration instructions, see the :ref:`saltclass <saltclass>` node classifier
 """
 
 # import python libs
@@ -54,7 +56,7 @@ def ext_pillar(minion_id, pillar, *args, **kwargs):
         else:
             path = i["path"]
 
-    # Create a dict that will contain our salt dicts to pass it to reclass
+    # Create a dict that will contain our salt dicts to pass it to saltclass
     salt_data = {
         "__opts__": __opts__,
         "__salt__": __salt__,
@@ -63,5 +65,4 @@ def ext_pillar(minion_id, pillar, *args, **kwargs):
         "minion_id": minion_id,
         "path": path,
     }
-
     return sc.get_pillars(minion_id, salt_data)
