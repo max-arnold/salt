@@ -19,8 +19,6 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 import logging
 
-import salt.utils.saltclass as sc
-
 log = logging.getLogger(__name__)
 
 
@@ -52,7 +50,7 @@ def ext_pillar(minion_id, pillar, *args, **kwargs):
         if "path" not in i:
             path = "/srv/saltclass"
             args[i]["path"] = path
-            log.warning("path variable unset, using default: %s", path)
+            log.info("path variable unset, using default: %s", path)
         else:
             path = i["path"]
 
@@ -65,4 +63,4 @@ def ext_pillar(minion_id, pillar, *args, **kwargs):
         "minion_id": minion_id,
         "path": path,
     }
-    return sc.get_pillars(minion_id, salt_data)
+    return __utils__["saltclass.get_pillars"](minion_id, salt_data)

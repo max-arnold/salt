@@ -6,6 +6,8 @@ from __future__ import absolute_import, print_function, unicode_literals
 import os
 
 # Import Salt Libs
+import salt.config
+import salt.loader
 import salt.pillar.saltclass as saltclass
 
 # Import Salt Testing libs
@@ -33,11 +35,14 @@ class SaltclassPillarTestCase(TestCase, LoaderModuleMockMixin):
     """
 
     def setup_loader_modules(self):
+        opts = salt.config.DEFAULT_MINION_OPTS.copy()
+        utils = salt.loader.utils(opts, whitelist=["saltclass"], context={})
         return {
             saltclass: {
                 "__opts__": fake_opts,
                 "__salt__": fake_salt,
                 "__grains__": fake_grains,
+                "__utils__": utils,
             }
         }
 
@@ -62,11 +67,14 @@ class SaltclassPillarTestCaseListExpansion(TestCase, LoaderModuleMockMixin):
     """
 
     def setup_loader_modules(self):
+        opts = salt.config.DEFAULT_MINION_OPTS.copy()
+        utils = salt.loader.utils(opts, whitelist=["saltclass"], context={})
         return {
             saltclass: {
                 "__opts__": fake_opts,
                 "__salt__": fake_salt,
                 "__grains__": fake_grains,
+                "__utils__": utils,
             }
         }
 

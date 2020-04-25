@@ -17,8 +17,6 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 import logging
 
-import salt.utils.saltclass as sc
-
 log = logging.getLogger(__name__)
 
 
@@ -51,7 +49,7 @@ def top(**kwargs):
     _opts = __opts__["master_tops"]["saltclass"]
     if "path" not in _opts:
         path = "/srv/saltclass"
-        log.warning("path variable unset, using default: %s", path)
+        log.info("path variable unset, using default: %s", path)
     else:
         path = _opts["path"]
 
@@ -67,8 +65,7 @@ def top(**kwargs):
         "__salt__": {},
         "__grains__": kwargs["grains"],
         "__pillar__": {},
-        "minion_id": minion_id,
         "path": path,
     }
 
-    return sc.get_tops(minion_id, salt_data)
+    return __utils__["saltclass.get_tops"](minion_id, salt_data)
