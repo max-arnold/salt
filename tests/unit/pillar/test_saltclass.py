@@ -8,25 +8,16 @@ import os
 # Import Salt Libs
 import salt.config
 import salt.loader
-import salt.pillar.saltclass as saltclass
+import salt.pillar.saltclass as sc_pillar
 
 # Import Salt Testing libs
 from tests.support.mixins import LoaderModuleMockMixin
+from tests.support.runtests import RUNTIME_VARS
 from tests.support.unit import TestCase
 
-base_path = os.path.dirname(os.path.realpath(__file__))
-fake_minion_id = "fake_id"
-fake_pillar = {}
 fake_args = {
-    "path": os.path.abspath(
-        os.path.join(
-            base_path, "..", "..", "integration", "files", "saltclass", "examples"
-        )
-    )
+    "path": os.path.abspath(os.path.join(RUNTIME_VARS.FILES, "saltclass", "examples"))
 }
-fake_opts = {}
-fake_salt = {}
-fake_grains = {}
 
 
 class SaltclassPillarTestCase(TestCase, LoaderModuleMockMixin):
@@ -37,18 +28,11 @@ class SaltclassPillarTestCase(TestCase, LoaderModuleMockMixin):
     def setup_loader_modules(self):
         opts = salt.config.DEFAULT_MINION_OPTS.copy()
         utils = salt.loader.utils(opts, whitelist=["saltclass"], context={})
-        return {
-            saltclass: {
-                "__opts__": fake_opts,
-                "__salt__": fake_salt,
-                "__grains__": fake_grains,
-                "__utils__": utils,
-            }
-        }
+        return {sc_pillar: {"__utils__": utils}}
 
     def _runner(self, expected_ret):
         try:
-            full_ret = saltclass.ext_pillar(fake_minion_id, fake_pillar, fake_args)
+            full_ret = sc_pillar.ext_pillar("fake_id", {}, fake_args)
             parsed_ret = full_ret["__saltclass__"]["classes"]
         # Fail the test if we hit our NoneType error
         except TypeError as err:
@@ -69,20 +53,11 @@ class SaltclassPillarTestCaseListExpansion(TestCase, LoaderModuleMockMixin):
     def setup_loader_modules(self):
         opts = salt.config.DEFAULT_MINION_OPTS.copy()
         utils = salt.loader.utils(opts, whitelist=["saltclass"], context={})
-        return {
-            saltclass: {
-                "__opts__": fake_opts,
-                "__salt__": fake_salt,
-                "__grains__": fake_grains,
-                "__utils__": utils,
-            }
-        }
+        return {sc_pillar: {"__utils__": utils}}
 
     def _runner(self, expected_ret):
-        full_ret = {}
-        parsed_ret = []
         try:
-            full_ret = saltclass.ext_pillar(fake_minion_id, fake_pillar, fake_args)
+            full_ret = sc_pillar.ext_pillar("fake_id", {}, fake_args)
             parsed_ret = full_ret["test_list"]
         # Fail the test if we hit our NoneType error
         except TypeError as err:
