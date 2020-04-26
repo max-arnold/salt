@@ -1,0 +1,4 @@
+grain: {{ grains['grain'] }}
+opt: {{ opts['opt'] }}
+pillar: {{ pillar['pillar'] }}
+salt: {{ salt['salt'] }}

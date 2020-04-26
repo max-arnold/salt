@@ -33,8 +33,16 @@ def _render_jinja(_file, salt_data):
 
 
 # Renders yaml from rendered jinja
-def render_yaml(_file, salt_data):
-    return salt.utils.yaml.safe_load(_render_jinja(_file, salt_data))
+def _render_yaml(_file, salt_data):
+    result = None
+    try:
+        result = salt.utils.yaml.safe_load(_render_jinja(_file, salt_data))
+    except salt.utils.yaml.YAMLError as e:
+        log.error("YAML rendering exception for file %s:\n%s", _file, e)
+    if result is None:
+        log.warning("Unable to render yaml from %s", _file)
+        return {}
+    return result
 
 
 # Returns a dict from a class yaml definition
@@ -57,13 +65,13 @@ def get_class(_class, salt_data):
             l_files.append(os.path.join(root, l_file))
 
     if straight in l_files:
-        return render_yaml(straight, salt_data)
+        return _render_yaml(straight, salt_data)
 
     if sub_straight in l_files:
-        return render_yaml(sub_straight, salt_data)
+        return _render_yaml(sub_straight, salt_data)
 
     if sub_init in l_files:
-        return render_yaml(sub_init, salt_data)
+        return _render_yaml(sub_init, salt_data)
 
     log.warning("%s: Class definition not found", _class)
     return {}
@@ -280,7 +288,7 @@ def expanded_dict_from_minion(minion_id, salt_data):
     # Load the minion_id definition if existing, else an empty dict
     node_dict = {}
     if _file:
-        node_dict[minion_id] = render_yaml(_file, salt_data)
+        node_dict[minion_id] = _render_yaml(_file, salt_data)
     else:
         log.warning("%s: Node definition not found", minion_id)
         node_dict[minion_id] = {}
