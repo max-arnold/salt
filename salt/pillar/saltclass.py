@@ -22,11 +22,16 @@ import logging
 log = logging.getLogger(__name__)
 
 
+__virtualname__ = "saltclass"
+
+
 def __virtual__():
     """
-    This module has no external dependencies
+    Only run if properly configured
     """
-    return True
+    if __opts__["master_tops"].get("saltclass"):
+        return __virtualname__
+    return (False, "Saltclass ext_pillar isn't configured")
 
 
 def ext_pillar(minion_id, pillar, *args, **kwargs):

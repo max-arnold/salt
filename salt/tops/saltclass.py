@@ -20,13 +20,16 @@ import logging
 log = logging.getLogger(__name__)
 
 
+__virtualname__ = "saltclass"
+
+
 def __virtual__():
     """
     Only run if properly configured
     """
     if __opts__["master_tops"].get("saltclass"):
-        return True
-    return False
+        return __virtualname__
+    return (False, "Saltclass master_tops isn't configured")
 
 
 def top(**kwargs):
