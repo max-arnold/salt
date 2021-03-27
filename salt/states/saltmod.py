@@ -752,7 +752,6 @@ def runner(name, **kwargs):
         name, "executed" if success else "failed",
     )
 
-    ret["__orchestration__"] = True
     if "jid" in out:
         ret["__jid__"] = out["jid"]
 
@@ -994,7 +993,6 @@ def wheel(name, **kwargs):
         name, "executed" if success else "failed",
     )
 
-    ret["__orchestration__"] = True
     if "jid" in out:
         ret["__jid__"] = out["jid"]
 
