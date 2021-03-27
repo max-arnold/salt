@@ -1,0 +1,1 @@
+Remove obsolete __orchestration__ key from salt.runner and salt.wheel return data
