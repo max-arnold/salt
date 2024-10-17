@@ -40,7 +40,6 @@ import salt.syspaths
 import salt.transport
 import salt.utils.args
 import salt.utils.context
-import salt.utils.crypt
 import salt.utils.ctx
 import salt.utils.data
 import salt.utils.dictdiffer
@@ -1808,7 +1807,6 @@ class Minion(MinionBase):
                     name=name,
                     args=(instance, self.opts, data, self.connected, creds_map),
                 )
-                process.register_after_fork_method(salt.utils.crypt.reinit_crypto)
         else:
             process = threading.Thread(
                 target=self._target,
@@ -1857,14 +1855,11 @@ class Minion(MinionBase):
                 uid = salt.utils.user.get_uid(user=opts.get("user", None))
                 minion_instance.proc_dir = get_proc_dir(opts["cachedir"], uid=uid)
 
-        def run_func(minion_instance, opts, data):
+        with salt.utils.ctx.request_context({"data": data, "opts": opts}):
             if isinstance(data["fun"], tuple) or isinstance(data["fun"], list):
                 return Minion._thread_multi_return(minion_instance, opts, data)
             else:
                 return Minion._thread_return(minion_instance, opts, data)
-
-        with salt.utils.ctx.request_context({"data": data, "opts": opts}):
-            run_func(minion_instance, opts, data)
 
     def _execute_job_function(
         self, function_name, function_args, executors, opts, data
